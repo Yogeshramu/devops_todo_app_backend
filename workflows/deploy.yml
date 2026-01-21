@@ -1,0 +1,32 @@
+name: Backend Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v0.1.9
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            mkdir -p /home/ubuntu/todo_app/backend
+            cd /home/ubuntu/todo_app/backend
+            git fetch origin
+            git reset --hard origin/main
+            npm install
+            pm2 restart backend || pm2 start src/server.ts --name backend
+            # Restart Postgres container only if docker-compose.yml or .env changed
+            if [ "$(git diff HEAD~1 HEAD --name-only | grep -E 'docker-compose.yml|.env')" ]; then
+              docker compose up -d
+            fi

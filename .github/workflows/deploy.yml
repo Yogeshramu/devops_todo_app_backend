@@ -10,9 +10,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ Checkout repository
       - name: Checkout code
         uses: actions/checkout@v3
 
+      # 2️⃣ Deploy to EC2
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v0.1.9
         with:
@@ -20,13 +22,41 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
-            mkdir -p /home/ubuntu/todo_app/backend
-            cd /home/ubuntu/todo_app/backend
-            git fetch origin
-            git reset --hard origin/main
-            npm install
-            pm2 restart backend || pm2 start src/server.ts --name backend
-            # Restart Postgres container only if docker-compose.yml or .env changed
-            if [ "$(git diff HEAD~1 HEAD --name-only | grep -E 'docker-compose.yml|.env')" ]; then
-              docker compose up -d
+            APP_DIR=/home/ubuntu/devops_todo_app_backend
+
+            # Clone repo if missing
+            if [ ! -d "$APP_DIR" ]; then
+              git clone https://github.com/Yogeshramu/devops_todo_app_backend.git $APP_DIR
             fi
+
+            cd $APP_DIR
+
+            # Fetch and reset to remote main
+            git fetch origin main
+            git reset --hard origin/main
+
+            # Install dependencies
+            npm ci
+
+            # Build app (TypeScript -> JS)
+            npm run build
+
+            # 3️⃣ Handle Dockerized Postgres
+            # Only recreate if docker-compose.yml or .env changed
+            if git diff HEAD~1 HEAD --name-only | grep -E 'docker-compose.yml|\.env'; then
+              docker-compose up -d postgres
+              echo "Waiting for Postgres to be ready..."
+              sleep 10
+            fi
+
+            # 4️⃣ Prisma migration & generate
+            npx prisma generate
+            npx prisma db push
+
+            # 5️⃣ Start/reload backend app with PM2 (zero-downtime)
+            # Use reload if already running, otherwise start
+            pm2 reload backend || pm2 start dist/server.js --name backend
+            pm2 save
+
+            # 6️⃣ Optional: log current PM2 status
+            pm2 list
